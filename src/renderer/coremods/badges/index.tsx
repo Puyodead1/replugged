@@ -1,10 +1,11 @@
 import React from "@common/react";
-import { Logger } from "@replugged";
+import { Logger, util } from "@replugged";
 import type { User } from "discord-types/general";
 import { Injector } from "../../modules/injector";
 import { getByProps, waitForProps } from "../../modules/webpack";
 import { generalSettings } from "../settings/pages/General";
 import { APIBadges, BadgeSizes, Custom, badgeElements, getBadgeSizeClass } from "./badge";
+import { Tree } from "../../util";
 
 const injector = new Injector();
 
@@ -31,6 +32,13 @@ interface BadgeCache {
   badges: APIBadges;
   lastFetch: number;
 }
+interface TreeNode {
+  children: React.ReactElement[];
+}
+interface BadgeHighs {
+  props: { children: { props: { children: React.ReactElement[] } } };
+}
+type CombinedTree = Tree & { className: string };
 
 // todo: guilds
 const cache = new Map<string, BadgeCache>();
@@ -43,7 +51,7 @@ export async function start(): Promise<void> {
     "containerWithContent",
   )!;
 
-  injector.after(mod, "default", ([props], res) => {
+  injector.after(mod, "default", ([props], res: BadgeHighs) => {
     let {
       user: { id },
       shrinkAtCount,
@@ -93,21 +101,29 @@ export async function start(): Promise<void> {
       if (!badges) {
         return res;
       }
-      const children = res?.props.children;
-      if (!children || !Array.isArray(children)) {
-        logger.error("Error injecting badges: res.props.children is not an array", { children });
+
+      const props = util.findInTree(res as unknown as Tree, (x) => Boolean(x?.["aria-label"])) as
+        | TreeNode
+        | undefined;
+      if (!props || !Array.isArray(props.children)) {
+        logger.error(
+          "Error injecting badges: res.props.children.props.children is not an array",
+          props?.children,
+        );
         return res;
       }
 
       // Calculate badge size with new added badges
       const addedBadgesCount =
-        children.length + Object.values(badges).filter((value) => value).length;
+        props.children.length + Object.values(badges).filter((value) => value).length;
       size =
         shrinkAtCount && shrinkToSize && addedBadgesCount > shrinkAtCount ? shrinkToSize : size;
 
       const sizeClass = getBadgeSizeClass(size);
 
-      children.forEach((badge) => {
+      /* I don't even know what this is used for. */
+      /* props.children.forEach((badge) => {
+        console.log(props)
         const elem: React.ReactElement | undefined = badge.props.children?.();
         if (elem) {
           elem.props.children.props.className = sizeClass;
@@ -116,16 +132,18 @@ export async function start(): Promise<void> {
             return elem;
           };
         }
-      });
+      }); */
 
       if (badges.custom?.name && badges.custom.icon) {
-        children.push(<Custom url={badges.custom.icon} name={badges.custom.name} size={size} />);
+        props.children.push(
+          <Custom url={badges.custom.icon} name={badges.custom.name} size={size} />,
+        );
       }
 
       badgeElements.forEach(({ type, component }) => {
         const value = badges[type];
         if (value) {
-          children.push(
+          props.children.push(
             React.createElement(component, {
               color: badges.custom?.color,
               size,
@@ -134,12 +152,16 @@ export async function start(): Promise<void> {
         }
       });
 
-      if (children.length > 0) {
-        if (!res.props.className.includes(containerWithContent)) {
-          res.props.className += ` ${containerWithContent}`;
+      const badgesClassName = util.findInTree(res as unknown as Tree, (x) =>
+        Boolean(x?.className),
+      ) as CombinedTree;
+      if (!badgesClassName) return;
+      if (props.children.length > 0) {
+        if (!badgesClassName.className.includes(containerWithContent)) {
+          badgesClassName.className += ` ${containerWithContent}`;
         }
-        if (!res.props.className.includes("replugged-badges-container")) {
-          res.props.className += " replugged-badges-container";
+        if (!badgesClassName.className.includes("replugged-badges-container")) {
+          badgesClassName.className += " replugged-badges-container";
         }
       }
 
